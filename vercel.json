@@ -4,7 +4,7 @@
   "crons": [
     {
       "path": "/api/cron/scheduled-posts",
-      "schedule": "*/5 * * * *"
+      "schedule": "0 0 * * *"
     },
     {
       "path": "/api/cron/recordings-retention",
@@ -12,7 +12,7 @@
     },
     {
       "path": "/api/cron/presence-gc",
-      "schedule": "* * * * *"
+      "schedule": "0 4 * * *"
     }
   ]
 }

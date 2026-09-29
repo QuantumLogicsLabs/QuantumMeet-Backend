@@ -201,6 +201,9 @@ router.get("/:roomId/events", async (req, res) => {
     res.json({
       events,
       serverTime: new Date().toISOString(),
+      // Lets clients tell a real long-poll from an immediate reply (flag off /
+      // older API) so they back off instead of re-polling every few ms.
+      longPoll: waitMs > 0,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -320,13 +323,16 @@ router.post("/:roomId/presence", presenceLimiter, async (req, res) => {
     if (!userId || !connectionId)
       return res.status(400).json({ error: "userId and connectionId required" });
 
+    // Captured before entering so the joiner's event cursor starts here (server
+    // clock) — anything peers publish after this point is delivered.
+    const since = new Date().toISOString();
     if (heartbeat) {
       await heartbeatPresence({ roomId, userId, userName, connectionId });
     } else {
       await enterPresence({ roomId, userId, userName, connectionId });
     }
     const members = await listPresence(roomId);
-    res.json({ members });
+    res.json({ members, since });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
