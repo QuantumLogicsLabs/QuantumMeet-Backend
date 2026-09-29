@@ -17,6 +17,10 @@ if (process.env.SENTRY_DSN) {
 }
 
 const app = express();
+// Vercel's edge sets X-Forwarded-For to the real client IP (and strips any
+// client-supplied value). Without this, req.ip is the proxy address and every
+// visitor shares one rate-limit bucket.
+app.set("trust proxy", 1);
 const log = require("./lib/log");
 const { requestIdMiddleware } = require("./lib/requestId");
 const { getIceConfig } = require("./lib/ice");
@@ -32,9 +36,8 @@ const allowedOrigins = [
   "http://localhost:3000",
   "http://localhost:5001",
   // Extra origins (e.g. a custom domain) can be added without a redeploy.
-  ...(process.env.EXTRA_ALLOWED_ORIGINS || "")
-    .split(",")
-    .map((o) => o.trim())
+  ...[process.env.CLIENT_URL, ...(process.env.EXTRA_ALLOWED_ORIGINS || "").split(",")]
+    .map((o) => (o || "").trim().replace(/\/+$/, ""))
     .filter(Boolean),
 ];
 
@@ -50,25 +53,23 @@ app.use(
   }),
 );
 
+// Unknown origins get no CORS headers (the browser blocks them) instead of a
+// thrown error, which Express would turn into a 500 HTML page.
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (
+      callback(
+        null,
         !origin ||
-        allowedOrigins.includes(origin) ||
-        allowedOriginPattern.test(origin)
-      ) {
-        callback(null, true);
-      } else {
-        callback(new Error("CORS: origin not allowed → " + origin));
-      }
+          allowedOrigins.includes(origin) ||
+          allowedOriginPattern.test(origin),
+      );
     },
     credentials: true,
   }),
 );
-app.options("*", cors());
 
-app.use(express.json());
+app.use(express.json({ limit: "1mb" }));
 
 // ── DB connection (E-111: fail closed for stateful APIs) ──────────────────────
 const DB_REQUIRED_PREFIXES = [
@@ -156,6 +157,12 @@ app.get("/api/ice", (_req, res) => {
   });
 });
 
+// Server clock for realtime cursors — event timestamps are server time, so
+// clients must not start their `since` cursor from their own (skewed) clock.
+app.get("/api/time", (_req, res) => {
+  res.json({ serverTime: new Date().toISOString() });
+});
+
 // Health check — reports DB state (never fail-closed; used by probes)
 app.get("/api/health", async (req, res) => {
   let db = "disconnected";
@@ -180,6 +187,25 @@ app.get("/api/health", async (req, res) => {
       media: "mesh",
       deploy: "vercel-serverless",
     },
+  });
+});
+
+// JSON 404 / error responses — the client parses every API reply as JSON.
+app.use("/api", (req, res) => {
+  res.status(404).json({ error: "Not found", path: req.path });
+});
+
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, _next) => {
+  const status = err.status || err.statusCode || 500;
+  log.error("unhandled_error", {
+    err: err.message,
+    requestId: req.requestId,
+    path: req.path,
+  });
+  res.status(status).json({
+    error: status === 500 ? "Internal server error" : err.message,
+    requestId: req.requestId,
   });
 });
 

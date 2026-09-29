@@ -556,6 +556,12 @@ router.delete("/:classroomId/topics/:topicId", async (req, res) => {
 
 router.get("/:classroomId/posts", async (req, res) => {
   try {
+    // The cron only runs daily on Vercel Hobby — publish anything due now.
+    const { publishDueScheduledPosts } = require("./lib/scheduledPosts");
+    await publishDueScheduledPosts({
+      classroomId: req.params.classroomId,
+      limit: 20,
+    }).catch(() => {});
     const posts = await Post.find({ classroomId: req.params.classroomId }).sort(
       { pinned: -1, createdAt: -1 },
     );
